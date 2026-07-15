@@ -1,53 +1,20 @@
-name: Deploy Flask App
-
-on:
-  push:
-    branches:
-      - main
-
-permissions:
-  id-token: write
-  contents: read
-
-jobs:
-  deploy:
-
-    runs-on: ubuntu-latest
-
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Debug OIDC
-        run: |
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Ref: $GITHUB_REF"
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::768396678386:role/GitHubActions-AppDeploy-Role
-          aws-region: us-east-1
-
-      - name: Encode application files
-        run: |
-          APP=$(base64 -w 0 app.py)
-          REQ=$(base64 -w 0 requirements.txt)
-
-          echo "APP=$APP" >> $GITHUB_ENV
-          echo "REQ=$REQ" >> $GITHUB_ENV
-
-      - name: Deploy to App ASG
-        run: |
-          aws ssm send-command \
-            --targets "Key=tag:aws:autoscaling:groupName,Values=asg-app-prod" \
-            --document-name "AWS-RunShellScript" \
-            --parameters commands="[
-              'dnf install python3-pip -y',
-              'mkdir -p /opt/app',
-              'echo $REQ | base64 -d > /opt/app/requirements.txt',
-              'pip3 install -r /opt/app/requirements.txt',
-              'echo $APP | base64 -d > /opt/app/app.py',
-              'systemctl restart app'
-            ]"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::768396678386:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com"
+        },
+        "StringLike": {
+          "token.actions.githubusercontent.com:sub": "repo:AntiAir/aws-flask-app:ref:refs/heads/main"
+        }
+      }
+    }
+  ]
+}
