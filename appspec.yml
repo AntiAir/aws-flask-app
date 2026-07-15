@@ -1,0 +1,13 @@
+version: 0.0
+
+os: linux
+
+files:
+  - source: /
+    destination: /opt/app
+
+hooks:
+  AfterInstall:
+    - location: restart.sh
+      timeout: 60
+      runas: root
