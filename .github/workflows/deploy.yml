@@ -1,0 +1,41 @@
+name: Deploy Flask App
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::768396678386:role/GitHubActions-AppDeploy-Role
+          aws-region: us-east-1
+
+      - name: Encode app.py
+        run: |
+          APP=$(base64 -w 0 app.py)
+          echo "APP=$APP" >> $GITHUB_ENV
+
+      - name: Deploy to EC2
+        run: |
+          aws ssm send-command \
+            --instance-ids i-080f5148bce5d22e7 \
+            --document-name "AWS-RunShellScript" \
+            --parameters commands="[
+              'echo $APP | base64 -d > /opt/app/app.py',
+              'systemctl restart app'
+            ]"
