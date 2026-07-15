@@ -25,17 +25,24 @@ jobs:
           role-to-assume: arn:aws:iam::768396678386:role/GitHubActions-AppDeploy-Role
           aws-region: us-east-1
 
-      - name: Encode app.py
+      - name: Encode application files
         run: |
           APP=$(base64 -w 0 app.py)
-          echo "APP=$APP" >> $GITHUB_ENV
+          REQ=$(base64 -w 0 requirements.txt)
 
-      - name: Deploy to EC2
+          echo "APP=$APP" >> $GITHUB_ENV
+          echo "REQ=$REQ" >> $GITHUB_ENV
+
+      - name: Deploy to App ASG
         run: |
           aws ssm send-command \
-            --instance-ids i-080f5148bce5d22e7 \
+            --targets "Key=tag:aws:autoscaling:groupName,Values=asg-app-prod" \
             --document-name "AWS-RunShellScript" \
             --parameters commands="[
+              'dnf install python3-pip -y',
+              'mkdir -p /opt/app',
+              'echo $REQ | base64 -d > /opt/app/requirements.txt',
+              'pip3 install -r /opt/app/requirements.txt',
               'echo $APP | base64 -d > /opt/app/app.py',
               'systemctl restart app'
             ]"
