@@ -23,8 +23,13 @@ jobs:
         run: |
           echo "Repository: $GITHUB_REPOSITORY"
           echo "Ref: $GITHUB_REF"
-          echo "Workflow: $GITHUB_WORKFLOW"
-          echo "Actor: $GITHUB_ACTOR"
+
+      - name: Debug OIDC Claims
+        run: |
+          TOKEN=$(curl -sLS "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" | jq -r '.value')
+
+          echo "$TOKEN" | cut -d "." -f2 | base64 -d | jq
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
