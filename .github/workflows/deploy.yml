@@ -9,58 +9,99 @@ permissions:
   id-token: write
   contents: read
 
+env:
+  AWS_REGION: us-east-1
+  ASG_NAME: asg-app-prod
+
 jobs:
+
   deploy:
 
     runs-on: ubuntu-latest
 
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Debug GitHub Context
-        run: |
-          echo "Repository: $GITHUB_REPOSITORY"
-          echo "Ref: $GITHUB_REF"
 
-      - name: Debug OIDC Claims
-        run: |
-          TOKEN=$(curl -sLS "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
-          -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" | jq -r '.value')
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: arn:aws:iam::768396678386:role/GitHubActions-AppDeploy-Role
+        aws-region: us-east-1
 
-          echo "$TOKEN" | cut -d "." -f2 | base64 -d | jq
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::768396678386:role/GitHubActions-AppDeploy-Role
-          aws-region: us-east-1
-          role-session-name: GitHubActionsDebug
-          mask-aws-account-id: false
+    - name: Verify AWS Identity
+      run: |
+        aws sts get-caller-identity
 
-      - name: Verify AWS Identity
-        run: |
-          aws sts get-caller-identity
 
-      - name: Encode application files
-        run: |
-          APP=$(base64 -w 0 app.py)
-          REQ=$(base64 -w 0 requirements.txt)
+    - name: Get ASG Instances
+      id: get_instances
+      run: |
 
-          echo "APP=$APP" >> $GITHUB_ENV
-          echo "REQ=$REQ" >> $GITHUB_ENV
+        IDS=$(aws autoscaling describe-auto-scaling-groups \
+        --auto-scaling-group-names $ASG_NAME \
+        --query "AutoScalingGroups[0].Instances[?LifecycleState=='InService'].InstanceId" \
+        --output text)
 
-      - name: Deploy to App ASG
-        run: |
-          aws ssm send-command \
-            --targets "Key=tag:aws:autoscaling:groupName,Values=asg-app-prod" \
-            --document-name "AWS-RunShellScript" \
-            --parameters commands="[
-              'dnf install python3-pip -y',
-              'mkdir -p /opt/app',
-              'echo $REQ | base64 -d > /opt/app/requirements.txt',
-              'pip3 install -r /opt/app/requirements.txt',
-              'echo $APP | base64 -d > /opt/app/app.py',
-              'systemctl restart app'
-            ]"
+        echo "Instances:"
+        echo $IDS
+
+        if [ -z "$IDS" ]; then
+          echo "No running instances found"
+          exit 1
+        fi
+
+        echo "INSTANCE_IDS=$IDS" >> $GITHUB_ENV
+
+
+    - name: Encode Application
+      run: |
+
+        APP=$(base64 -w 0 app.py)
+        REQ=$(base64 -w 0 requirements.txt)
+
+        echo "APP=$APP" >> $GITHUB_ENV
+        echo "REQ=$REQ" >> $GITHUB_ENV
+
+
+
+    - name: Deploy via SSM
+      id: ssm
+      run: |
+
+        COMMAND_ID=$(aws ssm send-command \
+        --instance-ids $INSTANCE_IDS \
+        --document-name AWS-RunShellScript \
+        --comment "Deploy Flask Application" \
+        --parameters commands="[
+        'dnf install python3-pip -y',
+        'mkdir -p /opt/app',
+        'echo $REQ | base64 -d > /opt/app/requirements.txt',
+        'pip3 install -r /opt/app/requirements.txt',
+        'echo $APP | base64 -d > /opt/app/app.py',
+        'systemctl daemon-reload',
+        'systemctl restart app',
+        'systemctl status app --no-pager'
+        ]" \
+        --query "Command.CommandId" \
+        --output text)
+
+
+        echo "Command ID:"
+        echo $COMMAND_ID
+
+        echo "COMMAND_ID=$COMMAND_ID" >> $GITHUB_ENV
+
+
+
+    - name: Wait SSM Result
+      run: |
+
+        sleep 10
+
+        aws ssm list-command-invocations \
+        --command-id $COMMAND_ID \
+        --details
